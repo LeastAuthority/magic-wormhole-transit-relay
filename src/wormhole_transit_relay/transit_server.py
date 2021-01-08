@@ -58,6 +58,7 @@ class TransitConnection(LineReceiver):
             pass
 
     def lineReceived(self, line):
+        log.msg(f'line received: #{line}')
         # old: "please relay {64}\n"
         old = re.search(br"^please relay (\w{64})$", line)
         if old:
@@ -74,6 +75,7 @@ class TransitConnection(LineReceiver):
         self.sendLine(b"bad handshake")
         if self._log_requests:
             log.msg("transit handshake failure")
+        log.msg("self.disconnect_error")
         return self.disconnect_error()
 
     def rawDataReceived(self, data):
@@ -103,6 +105,7 @@ class TransitConnection(LineReceiver):
         return self.disconnect_error() # impatience yields failure
 
     def _got_handshake(self, token, side):
+        log.msg("_got_handshake")
         self._got_token = token
         self._got_side = side
         self._mood = "lonely" # until buddy connects
@@ -110,6 +113,7 @@ class TransitConnection(LineReceiver):
         self.factory.connection_got_token(token, side, self)
 
     def buddy_connected(self, them):
+        log.msg("buddy_connected")
         self._buddy = them
         self._mood = "happy"
         self.sendLine(b"ok")
@@ -247,13 +251,21 @@ class Transit(protocol.ServerFactory):
         self._pending_requests = defaultdict(set) # token -> set((side, TransitConnection))
         self._active_connections = set() # TransitConnection
 
+    # def get_welcome(self):
+    #     return {}
+    #
+    # def get_log_requests(self):
+    #     return self._blur_usage is None
+
     def connection_got_token(self, token, new_side, new_tc):
+        log.msg("connection_got_token")
         potentials = self._pending_requests[token]
         for old in potentials:
             (old_side, old_tc) = old
             if ((old_side is None)
                 or (new_side is None)
                 or (old_side != new_side)):
+                log.msg("found a match! (whatever that means)")
                 # we found a match
                 if self._debug_log:
                     log.msg("transit relay 2: %s" % new_tc.describeToken())

@@ -4,15 +4,19 @@ from twisted.python import usage
 from twisted.application.service import MultiService
 from twisted.application.internet import (TimerService,
                                           StreamServerEndpointService)
+
 from twisted.internet import endpoints
+
 from . import transit_server
 from .increase_rlimits import increase_rlimits
+from .web import make_web_server
 
 LONGDESC = """\
 This plugin sets up a 'Transit Relay' server for magic-wormhole. This service
 listens for TCP connections, finds pairs which present the same handshake, and
 glues the two TCP sockets together.
 """
+
 
 class Options(usage.Options):
     synopsis = "[--port=] [--log-fd] [--blur-usage=] [--usage-db=]"
@@ -23,7 +27,7 @@ class Options(usage.Options):
         ("blur-usage", None, None, "blur timestamps and data sizes in logs"),
         ("log-fd", None, None, "write JSON usage logs to this file descriptor"),
         ("usage-db", None, None, "record usage data (SQLite)"),
-        ]
+    ]
 
     def opt_blur_usage(self, arg):
         self["blur-usage"] = int(arg)
@@ -31,14 +35,19 @@ class Options(usage.Options):
 
 def makeService(config, reactor=reactor):
     increase_rlimits()
-    ep = endpoints.serverFromString(reactor, config["port"]) # to listen
+    usage_db = config["usage-db"]
+    blur_usage = config["blur-usage"]
+    ep = endpoints.serverFromString(reactor, config["port"])  # to listen
     log_file = (os.fdopen(int(config["log-fd"]), "w")
                 if config["log-fd"] is not None
                 else None)
-    f = transit_server.Transit(blur_usage=config["blur-usage"],
+    f = transit_server.Transit(blur_usage=blur_usage,
                                log_file=log_file,
-                               usage_db=config["usage-db"])
+                               usage_db=usage_db)
     parent = MultiService()
-    StreamServerEndpointService(ep, f).setServiceParent(parent)
-    TimerService(5*60.0, f.timerUpdateStats).setServiceParent(parent)
+    site = make_web_server(f, blur_usage, log_file, usage_db) #,
+                           # config["websocket-protocol-options"])
+    # StreamServerEndpointService(ep, f).setServiceParent(parent)
+    StreamServerEndpointService(ep, site).setServiceParent(parent)
+    TimerService(5 * 60.0, f.timerUpdateStats).setServiceParent(parent)
     return parent
