@@ -79,6 +79,7 @@ class TransitConnection(LineReceiver):
         return self.disconnect_error()
 
     def rawDataReceived(self, data):
+        log.msg(f'rawDataReceived: #{data}')
         # We are an IPushProducer to our buddy's IConsumer, so they'll
         # throttle us (by calling pauseProducing()) when their outbound
         # buffer is full (e.g. when their downstream pipe is full). In
@@ -95,6 +96,7 @@ class TransitConnection(LineReceiver):
                 # happened 11 times in 40 days.
                 return
             self._total_sent += len(data)
+            log.msg(f'self_buddy.transport.write(data): #{data}')
             self._buddy.transport.write(data)
             return
 
@@ -113,9 +115,10 @@ class TransitConnection(LineReceiver):
         self.factory.connection_got_token(token, side, self)
 
     def buddy_connected(self, them):
-        log.msg("buddy_connected")
+        log.msg(f'buddy_connected to #{self.describeToken()}')
         self._buddy = them
         self._mood = "happy"
+        # self.sendLine(b"ok")
         self.sendLine(b"ok")
         self._sent_ok = True
         # Connect the two as a producer/consumer pair. We use streaming=True,
@@ -241,7 +244,7 @@ class Transit(protocol.ServerFactory):
             log.msg("not logging Transit connections to Twisted log")
         else:
             log.msg("not blurring access times")
-        self._debug_log = False
+        self._debug_log = True
         self._log_file = log_file
         self._db = None
         if usage_db:
@@ -258,14 +261,14 @@ class Transit(protocol.ServerFactory):
     #     return self._blur_usage is None
 
     def connection_got_token(self, token, new_side, new_tc):
-        log.msg("connection_got_token")
+        # log.msg("connection_got_token")
         potentials = self._pending_requests[token]
         for old in potentials:
             (old_side, old_tc) = old
             if ((old_side is None)
                 or (new_side is None)
                 or (old_side != new_side)):
-                log.msg("found a match! (whatever that means)")
+                # log.msg("found a match!")
                 # we found a match
                 if self._debug_log:
                     log.msg("transit relay 2: %s" % new_tc.describeToken())
@@ -284,6 +287,7 @@ class Transit(protocol.ServerFactory):
                 # glue the two ends together
                 self._active_connections.add(new_tc)
                 self._active_connections.add(old_tc)
+                # log.msg(f'buddy connected| old_tc: #{old_tc}; new_tc: #{new_tc}')
                 new_tc.buddy_connected(old_tc)
                 old_tc.buddy_connected(new_tc)
                 return

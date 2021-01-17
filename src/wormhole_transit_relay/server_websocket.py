@@ -1,11 +1,11 @@
 from __future__ import unicode_literals
-import time
+import signal
+
 from twisted.internet import reactor
 from twisted.python import log
 from autobahn.twisted import websocket
-from .errors import CrowdedError, ReclaimedError, SidedMessage
+
 from .transit_server import TransitConnection, Transit
-from .util import dict_to_bytes, bytes_to_dict
 
 # The WebSocket allows the client to send "commands" to the server, and the
 # server to send "responses" to the client. Note that commands and responses
@@ -100,215 +100,27 @@ class WebSocketTransit(websocket.WebSocketServerProtocol, TransitConnection):
     def __init__(self):
         websocket.WebSocketServerProtocol.__init__(self)
         TransitConnection.__init__(self)
-        # self._app = None
-        # self._side = None
-        # self._did_allocate = False # only one allocate() per websocket
-        # self._listening = False
-        # self._did_claim = False
-        # self._nameplate_id = None
-        # self._did_release = False
-        # self._did_open = False
-        # self._mailbox = None
-        # self._mailbox_id = None
-        # self._did_close = False
-
-    # def onConnect(self, request):
-    #     rv = self.factory.server
-    #     # TODO: cleanup
-    #     # if rv.get_log_requests():
-    #     log.msg("ws client connecting: %s" % (request.peer,))
-    #
-    #     self._reactor = self.factory.reactor
-    #
-    # def onOpen(self):
-    #     rv = self.factory.server
-    #     self.send("welcome", welcome=rv.get_welcome())
+        # self._handshake_done = False
 
     def onMessage(self, payload, isBinary):
-        print(f'payload: #{payload}')
-        log.msg(f'payload: #{payload}')
+        log.msg(f'onMesage payload: #{payload}; isBinary #{isBinary}')
 
-        self.lineReceived(payload)
-        pass
+        if not self._sent_ok:
+            log.msg('not _sent_ok calling lineReceived')
+            self.lineReceived(payload)
+        else:
+            log.msg('_sent_ok calling rawDataReceived')
+            TransitConnection.rawDataReceived(self, payload)
 
-        # TODO: resume here...
+    def sendLine(self, data):
+        # log.msg(f'self.transport: #{self.transport}')
+        log.msg(f'sendData: #{data}')
+        # signal.raise_signal(signal.SIGUSR2)
+        self.sendMessage(data, True)
 
-        # server_rx = time.time()
-        # msg = bytes_to_dict(payload)
-        # try:
-        #     if "type" not in msg:
-        #         raise Error("missing 'type'")
-        #     self.send("ack", id=msg.get("id"))
-        #
-        #     mtype = msg["type"]
-        #     if mtype == "ping":
-        #         return self.handle_ping(msg)
-        #     if mtype == "bind":
-        #         return self.handle_bind(msg, server_rx)
-        #
-        #     if not self._app:
-        #         raise Error("must bind first")
-        #     if mtype == "list":
-        #         return self.handle_list()
-        #     if mtype == "allocate":
-        #         return self.handle_allocate(server_rx)
-        #     if mtype == "claim":
-        #         return self.handle_claim(msg, server_rx)
-        #     if mtype == "release":
-        #         return self.handle_release(msg, server_rx)
-        #
-        #     if mtype == "open":
-        #         return self.handle_open(msg, server_rx)
-        #     if mtype == "add":
-        #         return self.handle_add(msg, server_rx)
-        #     if mtype == "close":
-        #         return self.handle_close(msg, server_rx)
-        #
-        #     raise Error("unknown type")
-        # except Error as e:
-        #     self.send("error", error=e._explain, orig=msg)
-
-    # def handle_ping(self, msg):
-    #     if "ping" not in msg:
-    #         raise Error("ping requires 'ping'")
-    #     self.send("pong", pong=msg["ping"])
-    #
-    # def handle_bind(self, msg, server_rx):
-    #     if self._app or self._side:
-    #         raise Error("already bound")
-    #     if "appid" not in msg:
-    #         raise Error("bind requires 'appid'")
-    #     if "side" not in msg:
-    #         raise Error("bind requires 'side'")
-    #     self._app = self.factory.server.get_app(msg["appid"])
-    #     self._side = msg["side"]
-    #     client_version = msg.get("client_version", (None, None))
-    #     # e.g. ("python", "0.xyz") . <=0.10.5 did not send client_version
-    #     self._app.log_client_version(server_rx, self._side, client_version)
-    #
-    #
-    # def handle_list(self):
-    #     nameplate_ids = sorted(self._app.get_nameplate_ids())
-    #     # provide room to add nameplate attributes later (like which wordlist
-    #     # is used for each, maybe how many words)
-    #     nameplates = [{"id": nid} for nid in nameplate_ids]
-    #     self.send("nameplates", nameplates=nameplates)
-    #
-    # def handle_allocate(self, server_rx):
-    #     if self._did_allocate:
-    #         raise Error("you already allocated one, don't be greedy")
-    #     nameplate_id = self._app.allocate_nameplate(self._side, server_rx)
-    #     assert isinstance(nameplate_id, type(""))
-    #     self._did_allocate = True
-    #     self.send("allocated", nameplate=nameplate_id)
-    #
-    # def handle_claim(self, msg, server_rx):
-    #     if "nameplate" not in msg:
-    #         raise Error("claim requires 'nameplate'")
-    #     if self._did_claim:
-    #         raise Error("only one claim per connection")
-    #     self._did_claim = True
-    #     nameplate_id = msg["nameplate"]
-    #     assert isinstance(nameplate_id, type("")), type(nameplate_id)
-    #     self._nameplate_id = nameplate_id
-    #     try:
-    #         mailbox_id = self._app.claim_nameplate(nameplate_id, self._side,
-    #                                                server_rx)
-    #     except CrowdedError:
-    #         raise Error("crowded")
-    #     except ReclaimedError:
-    #         raise Error("reclaimed")
-    #     self.send("claimed", mailbox=mailbox_id)
-    #
-    # def handle_release(self, msg, server_rx):
-    #     if self._did_release:
-    #         raise Error("only one release per connection")
-    #     if "nameplate" in msg:
-    #         if self._nameplate_id is not None:
-    #             if msg["nameplate"] != self._nameplate_id:
-    #                 raise Error("release and claim must use same nameplate")
-    #         nameplate_id = msg["nameplate"]
-    #     else:
-    #         if self._nameplate_id is None:
-    #             raise Error("release without nameplate must follow claim")
-    #         nameplate_id = self._nameplate_id
-    #     assert nameplate_id is not None
-    #     self._did_release = True
-    #     self._app.release_nameplate(nameplate_id, self._side, server_rx)
-    #     self.send("released")
-    #
-    #
-    # def handle_open(self, msg, server_rx):
-    #     if self._mailbox:
-    #         raise Error("only one open per connection")
-    #     if "mailbox" not in msg:
-    #         raise Error("open requires 'mailbox'")
-    #     mailbox_id = msg["mailbox"]
-    #     assert isinstance(mailbox_id, type(""))
-    #     self._mailbox_id = mailbox_id
-    #     try:
-    #         self._mailbox = self._app.open_mailbox(mailbox_id, self._side,
-    #                                                server_rx)
-    #     except CrowdedError:
-    #         raise Error("crowded")
-    #     def _send(sm):
-    #         self.send("message", side=sm.side, phase=sm.phase,
-    #                   body=sm.body, server_rx=sm.server_rx, id=sm.msg_id)
-    #     def _stop():
-    #         pass
-    #     self._listening = True
-    #     for old_sm in self._mailbox.add_listener(self, _send, _stop):
-    #         _send(old_sm)
-    #
-    # def handle_add(self, msg, server_rx):
-    #     if not self._mailbox:
-    #         raise Error("must open mailbox before adding")
-    #     if "phase" not in msg:
-    #         raise Error("missing 'phase'")
-    #     if "body" not in msg:
-    #         raise Error("missing 'body'")
-    #     msg_id = msg.get("id") # optional
-    #     sm = SidedMessage(side=self._side, phase=msg["phase"],
-    #                       body=msg["body"], server_rx=server_rx,
-    #                       msg_id=msg_id)
-    #     self._mailbox.add_message(sm)
-    #
-    # def handle_close(self, msg, server_rx):
-    #     if self._did_close:
-    #         raise Error("only one close per connection")
-    #     if "mailbox" in msg:
-    #         if self._mailbox_id is not None:
-    #             if msg["mailbox"] != self._mailbox_id:
-    #                 raise Error("open and close must use same mailbox")
-    #         mailbox_id = msg["mailbox"]
-    #     else:
-    #         if self._mailbox_id is None:
-    #             raise Error("close without mailbox must follow open")
-    #         mailbox_id = self._mailbox_id
-    #     if not self._mailbox:
-    #         try:
-    #             self._mailbox = self._app.open_mailbox(mailbox_id, self._side,
-    #                                                    server_rx)
-    #         except CrowdedError:
-    #             raise Error("crowded")
-    #     if self._listening:
-    #         self._mailbox.remove_listener(self)
-    #         self._listening = False
-    #     self._did_close = True
-    #     self._mailbox.close(self._side, msg.get("mood"), server_rx)
-    #     self._mailbox = None
-    #     self.send("closed")
-
-    # def send(self, mtype, **kwargs):
-    #     kwargs["type"] = mtype
-    #     kwargs["server_tx"] = time.time()
-    #     payload = dict_to_bytes(kwargs)
-    #     self.sendMessage(payload, False)
-
-    # def onClose(self, wasClean, code, reason):
-    #     #log.msg("onClose", self, self._mailbox, self._listening)
-    #     if self._mailbox and self._listening:
-    #         self._mailbox.remove_listener(self)
+    # def sendData(self, data, *args):
+    #     log.msg(f'_sendData: #{data}')
+    #     websocket.WebSocketServerProtocol.sendData(self, data, *args)
 
 
 class WebSocketTransitFactory(websocket.WebSocketServerFactory, Transit):

@@ -9,7 +9,7 @@ from twisted.internet import endpoints
 
 from . import transit_server
 from .increase_rlimits import increase_rlimits
-from .web import make_web_server
+from .server_websocket import WebSocketTransitFactory
 
 LONGDESC = """\
 This plugin sets up a 'Transit Relay' server for magic-wormhole. This service
@@ -45,9 +45,8 @@ def makeService(config, reactor=reactor):
                                log_file=log_file,
                                usage_db=usage_db)
     parent = MultiService()
-    site = make_web_server(f, blur_usage, log_file, usage_db) #,
-                           # config["websocket-protocol-options"])
+    wstf = WebSocketTransitFactory(None, f, blur_usage, log_file, usage_db)
+    StreamServerEndpointService(ep, wstf).setServiceParent(parent)
     # StreamServerEndpointService(ep, f).setServiceParent(parent)
-    StreamServerEndpointService(ep, site).setServiceParent(parent)
     TimerService(5 * 60.0, f.timerUpdateStats).setServiceParent(parent)
     return parent
