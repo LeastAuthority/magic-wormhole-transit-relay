@@ -2,7 +2,10 @@ from __future__ import print_function, unicode_literals
 from binascii import hexlify
 from twisted.trial import unittest
 from .common import ServerBase
-from .. import transit_server
+from ..server_state import (
+    MemoryUsageRecorder,
+    blur_size,
+)
 
 def handshake(token, side=None):
     hs = b"please relay " + hexlify(token)
@@ -13,27 +16,28 @@ def handshake(token, side=None):
 
 class _Transit:
     def count(self):
-        return sum([len(potentials)
-                    for potentials
-                    in self._transit_server._pending_requests.values()])
+        return sum([
+            len(potentials)
+            for potentials
+            in self._transit_server.pending_requests._requests.values()
+        ])
 
     def test_blur_size(self):
-        blur = transit_server.blur_size
-        self.failUnlessEqual(blur(0), 0)
-        self.failUnlessEqual(blur(1), 10e3)
-        self.failUnlessEqual(blur(10e3), 10e3)
-        self.failUnlessEqual(blur(10e3+1), 20e3)
-        self.failUnlessEqual(blur(15e3), 20e3)
-        self.failUnlessEqual(blur(20e3), 20e3)
-        self.failUnlessEqual(blur(1e6), 1e6)
-        self.failUnlessEqual(blur(1e6+1), 2e6)
-        self.failUnlessEqual(blur(1.5e6), 2e6)
-        self.failUnlessEqual(blur(2e6), 2e6)
-        self.failUnlessEqual(blur(900e6), 900e6)
-        self.failUnlessEqual(blur(1000e6), 1000e6)
-        self.failUnlessEqual(blur(1050e6), 1100e6)
-        self.failUnlessEqual(blur(1100e6), 1100e6)
-        self.failUnlessEqual(blur(1150e6), 1200e6)
+        self.failUnlessEqual(blur_size(0), 0)
+        self.failUnlessEqual(blur_size(1), 10e3)
+        self.failUnlessEqual(blur_size(10e3), 10e3)
+        self.failUnlessEqual(blur_size(10e3+1), 20e3)
+        self.failUnlessEqual(blur_size(15e3), 20e3)
+        self.failUnlessEqual(blur_size(20e3), 20e3)
+        self.failUnlessEqual(blur_size(1e6), 1e6)
+        self.failUnlessEqual(blur_size(1e6+1), 2e6)
+        self.failUnlessEqual(blur_size(1.5e6), 2e6)
+        self.failUnlessEqual(blur_size(2e6), 2e6)
+        self.failUnlessEqual(blur_size(900e6), 900e6)
+        self.failUnlessEqual(blur_size(1000e6), 1000e6)
+        self.failUnlessEqual(blur_size(1050e6), 1100e6)
+        self.failUnlessEqual(blur_size(1100e6), 1100e6)
+        self.failUnlessEqual(blur_size(1150e6), 1200e6)
 
     def test_register(self):
         p1 = self.new_protocol()
@@ -48,7 +52,7 @@ class _Transit:
         self.assertEqual(self.count(), 0)
 
         # the token should be removed too
-        self.assertEqual(len(self._transit_server._pending_requests), 0)
+        self.assertEqual(len(self._transit_server.pending_requests._requests), 0)
 
     def test_both_unsided(self):
         p1 = self.new_protocol()
@@ -168,8 +172,8 @@ class _Transit:
         side2 = b"\x02"*8
         p3.dataReceived(handshake(token1, side=side2))
         self.assertEqual(self.count(), 0)
-        self.assertEqual(len(self._transit_server._pending_requests), 0)
-        self.assertEqual(len(self._transit_server._active_connections), 2)
+        self.assertEqual(len(self._transit_server.pending_requests._requests), 0)
+        self.assertEqual(len(self._transit_server.active_connections._connections), 2)
         # That will trigger a disconnect on exactly one of (p1 or p2).
         # The other connection should still be connected
         self.assertEqual(sum([int(t.transport.connected) for t in [p1, p2]]), 1)
@@ -301,20 +305,21 @@ class _Transit:
         # hang up before sending anything
         p1.transport.loseConnection()
 
+
 class TransitWithLogs(_Transit, ServerBase, unittest.TestCase):
     log_requests = True
+
 
 class TransitWithoutLogs(_Transit, ServerBase, unittest.TestCase):
     log_requests = False
 
+
 class Usage(ServerBase, unittest.TestCase):
+
     def setUp(self):
         super(Usage, self).setUp()
-        self._usage = []
-        def record(started, result, total_bytes, total_time, waiting_time):
-            self._usage.append((started, result, total_bytes,
-                                total_time, waiting_time))
-        self._transit_server.recordUsage = record
+        self._usage = MemoryUsageRecorder()
+        self._transit_server.usage.add_backend(self._usage)
 
     def test_empty(self):
         p1 = self.new_protocol()
@@ -322,9 +327,8 @@ class Usage(ServerBase, unittest.TestCase):
         p1.transport.loseConnection()
 
         # that will log the "empty" usage event
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "empty", self._usage)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual(self._usage.events[0]["mood"], "empty", self._usage)
 
     def test_short(self):
         p1 = self.new_protocol()
@@ -333,9 +337,8 @@ class Usage(ServerBase, unittest.TestCase):
         p1.transport.loseConnection()
 
         # that will log the "empty" usage event
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "empty", self._usage)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual("empty", self._usage.events[0]["mood"])
 
     def test_errory(self):
         p1 = self.new_protocol()
@@ -343,9 +346,8 @@ class Usage(ServerBase, unittest.TestCase):
         p1.dataReceived(b"this is a very bad handshake\n")
         # that will log the "errory" usage event, then drop the connection
         p1.transport.loseConnection()
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "errory", self._usage)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual(self._usage.events[0]["mood"], "errory", self._usage)
 
     def test_lonely(self):
         p1 = self.new_protocol()
@@ -356,10 +358,9 @@ class Usage(ServerBase, unittest.TestCase):
         # now we disconnect before the peer connects
         p1.transport.loseConnection()
 
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "lonely", self._usage)
-        self.assertIdentical(waiting_time, None)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual(self._usage.events[0]["mood"], "lonely", self._usage)
+        self.assertIdentical(self._usage.events[0]["waiting_time"], None)
 
     def test_one_happy_one_jilted(self):
         p1 = self.new_protocol()
@@ -371,18 +372,17 @@ class Usage(ServerBase, unittest.TestCase):
         p1.dataReceived(handshake(token1, side=side1))
         p2.dataReceived(handshake(token1, side=side2))
 
-        self.assertEqual(self._usage, []) # no events yet
+        self.assertEqual(self._usage.events, []) # no events yet
 
         p1.dataReceived(b"\x00" * 13)
         p2.dataReceived(b"\xff" * 7)
 
         p1.transport.loseConnection()
 
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "happy", self._usage)
-        self.assertEqual(total_bytes, 20)
-        self.assertNotIdentical(waiting_time, None)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual(self._usage.events[0]["mood"], "happy", self._usage)
+        self.assertEqual(self._usage.events[0]["total_bytes"], 20)
+        self.assertNotIdentical(self._usage.events[0]["waiting_time"], None)
 
     def test_redundant(self):
         p1a = self.new_protocol()
@@ -402,19 +402,16 @@ class Usage(ServerBase, unittest.TestCase):
         p1c.dataReceived(handshake(token1, side=side1))
         p1c.transport.loseConnection()
 
-        self.assertEqual(len(self._usage), 1, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[0]
-        self.assertEqual(result, "lonely", self._usage)
+        self.assertEqual(len(self._usage.events), 1, self._usage)
+        self.assertEqual(self._usage.events[0]["mood"], "lonely")
 
         p2.dataReceived(handshake(token1, side=side2))
-        self.assertEqual(len(self._transit_server._pending_requests), 0)
-        self.assertEqual(len(self._usage), 2, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[1]
-        self.assertEqual(result, "redundant", self._usage)
+        self.assertEqual(len(self._transit_server.pending_requests._requests), 0)
+        self.assertEqual(len(self._usage.events), 2, self._usage)
+        self.assertEqual(self._usage.events[1]["mood"], "redundant")
 
         # one of the these is unecessary, but probably harmless
         p1a.transport.loseConnection()
         p1b.transport.loseConnection()
-        self.assertEqual(len(self._usage), 3, self._usage)
-        (started, result, total_bytes, total_time, waiting_time) = self._usage[2]
-        self.assertEqual(result, "happy", self._usage)
+        self.assertEqual(len(self._usage.events), 3, self._usage)
+        self.assertEqual(self._usage.events[2]["mood"], "happy")
